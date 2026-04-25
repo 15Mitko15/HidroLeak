@@ -1,0 +1,86 @@
+@import "leaflet/dist/leaflet.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  color-scheme: light dark;
+  color: rgba(255, 255, 255, 0.87);
+  background-color: #242424;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  width: 100%;
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  place-items: center;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+.leaflet-container {
+  width: 100%;
+  height: 100%;
+  background: #1a1a1a;
+}
+
+@keyframes pulse-red {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 10px rgba(239, 68, 68, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+  }
+}
+
+.leak-marker-pulse {
+  border-radius: 50%;
+  background: #ef4444;
+  cursor: pointer;
+  box-shadow: 0 0 0 rgba(239, 68, 68, 0.4);
+  animation: pulse-red 2s infinite;
+}
+
+.leak-marker-pulse.medium {
+  background: #f97316;
+  animation-name: pulse-orange;
+}
+
+.leak-marker-pulse.low {
+  background: #eab308;
+  animation-name: pulse-yellow;
+}
+
+@keyframes pulse-orange {
+  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.7); }
+  70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(249, 115, 22, 0); }
+  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(249, 115, 22, 0); }
+}
+
+@keyframes pulse-yellow {
+  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(234, 179, 8, 0.7); }
+  70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(234, 179, 8, 0); }
+  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(234, 179, 8, 0); }
+}
