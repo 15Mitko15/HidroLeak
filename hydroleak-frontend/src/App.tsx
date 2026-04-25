@@ -1,7 +1,7 @@
-import React, { useState, useCallback, useMemo } from 'react';
-import { MapContainer, TileLayer, GeoJSON, useMap } from 'react-leaflet';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import { MapContainer, TileLayer, GeoJSON, useMap, Tooltip, Polyline } from 'react-leaflet';
 import L from 'leaflet';
-import { ChevronLeft, Info, Droplets } from 'lucide-react';
+import { ChevronLeft, Info, Droplets, Layers } from 'lucide-react';
 import 'leaflet/dist/leaflet.css';
 
 import regionsData from './data/bulgaria-regions.json';
@@ -12,10 +12,109 @@ import LeakDetails from './components/LeakDetails';
 const BULGARIA_CENTER: [number, number] = [42.7339, 25.4858];
 const INITIAL_ZOOM = 7;
 
+const SectorGrid = () => {
+  const map = useMap();
+  const [zoom, setZoom] = useState(map.getZoom());
+  const [viewBounds, setViewBounds] = useState(() => {
+    try {
+      return map.getBounds();
+    } catch (e) {
+      return L.latLngBounds([41, 22], [45, 29]);
+    }
+  });
+
+  const latBase = 41.0;
+  const lngBase = 22.0;
+  const step = 0.1;
+
+  const grid = useMemo(() => {
+    const lines = [];
+    const latSteps = 40;
+    const lngSteps = 80;
+
+    for (let i = 0; i <= latSteps; i++) {
+      const lat = latBase + (i * step);
+      lines.push([[lat, lngBase], [lat, lngBase + (lngSteps * step)]]);
+    }
+    for (let j = 0; j <= lngSteps; j++) {
+      const lng = lngBase + (j * step);
+      lines.push([[latBase, lng], [latBase + (latSteps * step), lng]]);
+    }
+    return { lines, latSteps, lngSteps };
+  }, []);
+
+  useEffect(() => {
+    const onViewportChange = () => {
+      setZoom(map.getZoom());
+      try {
+        setViewBounds(map.getBounds());
+      } catch (e) {}
+    };
+
+    map.on('moveend', onViewportChange);
+    map.on('zoomend', onViewportChange);
+    
+    return () => {
+      map.off('moveend', onViewportChange);
+      map.off('zoomend', onViewportChange);
+    };
+  }, [map]);
+
+  const visibleLabels = useMemo(() => {
+    if (zoom < 10 || !viewBounds || !viewBounds.getSouth) return [];
+    
+    const labels = [];
+    const sLat = Math.max(0, Math.floor((viewBounds.getSouth() - latBase) / step));
+    const nLat = Math.min(grid.latSteps - 1, Math.ceil((viewBounds.getNorth() - latBase) / step));
+    const wLng = Math.max(0, Math.floor((viewBounds.getWest() - lngBase) / step));
+    const eLng = Math.min(grid.lngSteps - 1, Math.ceil((viewBounds.getEast() - lngBase) / step));
+
+    const maxLabels = 80;
+    let count = 0;
+
+    for (let i = sLat; i <= nLat && count < maxLabels; i++) {
+      for (let j = wLng; j <= eLng && count < maxLabels; j++) {
+        const lat = latBase + (i * step);
+        const lng = lngBase + (j * step);
+        labels.push({
+          id: `${i}-${j}`,
+          label: `${String.fromCharCode(65 + (i % 26))}${j + 1}`,
+          position: [lat + step/2, lng + step/2] as [number, number]
+        });
+        count++;
+      }
+    }
+    return labels;
+  }, [zoom, viewBounds, grid]);
+
+  return (
+    <>
+      <Polyline 
+        positions={grid.lines as any}
+        pathOptions={{ color: '#3b82f6', weight: 0.5, opacity: 0.4, dashArray: '2, 6' }}
+        interactive={false}
+      />
+      
+      {visibleLabels.map(l => (
+        <Tooltip
+          key={l.id}
+          position={l.position}
+          permanent
+          direction="center"
+          className="sector-id-label"
+          opacity={0.8}
+        >
+          {l.label}
+        </Tooltip>
+      ))}
+    </>
+  );
+};
+
 // Component to handle map view changes
 const MapViewHandler = ({ bounds }: { bounds: L.LatLngBoundsExpression | null }) => {
   const map = useMap();
-  React.useEffect(() => {
+  useEffect(() => {
     if (bounds) {
       map.flyToBounds(bounds, { padding: [20, 20], duration: 1.5 });
     } else {
@@ -29,6 +128,7 @@ const App: React.FC = () => {
   const [selectedRegion, setSelectedRegion] = useState<string | null>(null);
   const [selectedLeak, setSelectedLeak] = useState<Leak | null>(null);
   const [mapBounds, setMapBounds] = useState<L.LatLngBoundsExpression | null>(null);
+  const [showSectors, setShowSectors] = useState(false);
 
   const filteredLeaks = useMemo(() => {
     if (!selectedRegion) return [];
@@ -80,7 +180,11 @@ const App: React.FC = () => {
         }
       }
     });
-    layer.bindTooltip(feature.properties.shapeName, { sticky: true });
+    layer.bindTooltip(feature.properties.shapeName, { 
+      permanent: true, 
+      direction: 'center',
+      className: 'region-label'
+    });
   };
 
   return (
@@ -110,6 +214,22 @@ const App: React.FC = () => {
 
       {/* Info Stats Overlay */}
       <div className="absolute bottom-6 left-6 z-[1001] space-y-3 pointer-events-none">
+        {/* Map Controls */}
+        <div className="bg-industrial-900/80 backdrop-blur-md p-4 rounded-lg border border-industrial-700 pointer-events-auto shadow-xl w-64">
+          <h3 className="text-industrial-400 text-[10px] font-bold uppercase tracking-widest mb-3 flex items-center gap-2">
+            <Layers size={12} /> Map Controls
+          </h3>
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-gray-300 font-medium">Sector Grid</span>
+            <button 
+              onClick={() => setShowSectors(!showSectors)}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${showSectors ? 'bg-blue-600' : 'bg-industrial-600'}`}
+            >
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${showSectors ? 'translate-x-6' : 'translate-x-1'}`} />
+            </button>
+          </div>
+        </div>
+
         <div className="bg-industrial-900/80 backdrop-blur-md p-4 rounded-lg border border-industrial-700 pointer-events-auto shadow-xl w-64">
           <h3 className="text-industrial-400 text-[10px] font-bold uppercase tracking-widest mb-2 flex items-center gap-2">
             <Info size={12} /> System Status
@@ -140,6 +260,7 @@ const App: React.FC = () => {
           zoom={INITIAL_ZOOM} 
           zoomControl={false}
           className="w-full h-full"
+          preferCanvas={true}
         >
           <TileLayer
             url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
@@ -153,6 +274,10 @@ const App: React.FC = () => {
             style={regionStyle}
             onEachFeature={onEachRegion}
           />
+
+          {showSectors && (
+            <SectorGrid />
+          )}
 
           {selectedRegion && filteredLeaks.map(leak => (
             <LeakMarker 
