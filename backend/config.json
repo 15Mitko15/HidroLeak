@@ -1,8 +1,0 @@
-{
-  "SH_CLIENT_ID": "your_client_id_here",
-  "SH_CLIENT_SECRET": "your_client_secret_here",
-  "DEFAULT_SIZE_METERS": 1000,
-  "SEARCH_RANGE_DAYS": 30,
-  "OUTPUT_DIR": "data/fetched_images",
-  "RESOLUTION": 10
-}

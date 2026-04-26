@@ -1,3 +1,5 @@
 sentinelhub
 numpy
-Pillow
+pyproj
+matplotlib
+python-dotenv

@@ -1,144 +1,184 @@
 import os
-import argparse
-from datetime import datetime, timedelta
+import os
+import datetime
+import logging
+from typing import Tuple, Optional
+from dotenv import load_dotenv
 from sentinelhub import (
     SHConfig,
+    SentinelHubCatalog,
     SentinelHubRequest,
-    DataCollection,
     BBox,
     CRS,
+    DataCollection,
     MimeType,
     bbox_to_dimensions,
-    SentinelHubCatalog,
 )
 import numpy as np
-from PIL import Image
 
-def get_closest_date(catalog, data_collection, bbox, target_date, search_range_days=30):
-    """Search for the closest available date within a range."""
-    start_date = target_date - timedelta(days=search_range_days)
-    end_date = target_date + timedelta(days=search_range_days)
-    
-    search_iterator = catalog.search(
-        data_collection,
-        bbox=bbox,
-        time=(start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')),
-        fields={'properties.datetime'}
-    )
-    
-    results = list(search_iterator)
-    if not results:
-        return None
-    
-    # Sort by proximity to target_date
-    results.sort(key=lambda x: abs(datetime.fromisoformat(x['properties']['datetime'].replace('Z', '+00:00')).replace(tzinfo=None) - target_date))
-    
-    return results[0]['properties']['datetime']
+# Load environment variables from .env file
+load_dotenv()
 
-def fetch_image(config, data_collection, bbox, date, evalscript, output_path):
-    """Fetch image from Sentinel Hub and save it."""
+# Set up logging to see the requests
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("sentinelhub")
+logger.setLevel(logging.DEBUG)
+
+# Configuration - should be set via environment variables
+config = SHConfig()
+config.sh_client_id = os.environ.get("SH_CLIENT_ID")
+config.sh_client_secret = os.environ.get("SH_CLIENT_SECRET")
+config.sh_base_url = "https://sh.dataspace.copernicus.eu"
+config.sh_token_url = "https://"
+
+
+def get_bbox_from_point(lat: float, lon: float, length_meters: float) -> BBox:
+    """
+    Creates a BBox around a center point (lat, lon) with a given length in meters.
+    """
+    # Use a local UTM-like projection for accurate meter-based offsets
+    # For simplicity, we'll use a generic approach or estimate degrees
+    # 1 degree lat is approx 111,111 meters
+    # 1 degree lon is approx 111,111 * cos(lat) meters
+    
+    delta_lat = (length_meters / 2) / 111111
+    delta_lon = (length_meters / 2) / (111111 * np.cos(np.radians(lat)))
+    
+    return BBox([lon - delta_lon, lat - delta_lat, lon + delta_lon, lat + delta_lat], crs=CRS.WGS84)
+
+EVALSCRIPTS = {
+    "RGB": """
+        //VERSION=3
+        function setup() {
+          return {
+            input: ["B04", "B03", "B02"],
+            output: { bands: 3 }
+          };
+        }
+        function evaluatePixel(sample) {
+          return [2.5 * sample.B04, 2.5 * sample.B03, 2.5 * sample.B02];
+        }
+    """,
+    "NDVI": """
+        //VERSION=3
+        function setup() {
+          return {
+            input: ["B04", "B08"],
+            output: { bands: 1 }
+          };
+        }
+        function evaluatePixel(sample) {
+          let ndvi = (sample.B08 - sample.B04) / (sample.B08 + sample.B04);
+          return [ndvi];
+        }
+    """,
+    "NDWI": """
+        //VERSION=3
+        function setup() {
+          return {
+            input: ["B03", "B08"],
+            output: { bands: 1 }
+          };
+        }
+        function evaluatePixel(sample) {
+          let ndwi = (sample.B03 - sample.B08) / (sample.B03 + sample.B08);
+          return [ndwi];
+        }
+    """,
+    "MOISTURE": """
+        //VERSION=3
+        function setup() {
+          return {
+            input: ["B08", "B11"],
+            output: { bands: 1 }
+          };
+        }
+        function evaluatePixel(sample) {
+          let ndmi = (sample.B08 - sample.B11) / (sample.B08 + sample.B11);
+          return [ndmi];
+        }
+    """
+}
+
+def fetch_exact_image(
+    lat: float, 
+    lon: float, 
+    length_meters: float, 
+    target_date: str, 
+    index_type: str = "RGB"
+) -> Optional[np.ndarray]:
+    """
+    Fetches the Sentinel-2 image for the exact target date for a specific index.
+    target_date format: YYYY-MM-DD
+    index_type: RGB, NDVI, NDWI, MOISTURE
+    """
+    bbox = get_bbox_from_point(lat, lon, length_meters)
+    
+    print(f"Fetching image for exact date: {target_date} for index {index_type}")
+    
+    evalscript = EVALSCRIPTS.get(index_type, EVALSCRIPTS["RGB"])
+    mime_type = MimeType.PNG if index_type == "RGB" else MimeType.TIFF
+    
     request = SentinelHubRequest(
         evalscript=evalscript,
         input_data=[
             SentinelHubRequest.input_data(
-                data_collection=data_collection,
-                time=date,
-            ),
+                DataCollection.SENTINEL2_L2A,
+                time_interval=(target_date, target_date),
+            )
         ],
         responses=[
-            SentinelHubRequest.output_response('default', MimeType.PNG),
+            SentinelHubRequest.output_response("default", mime_type)
         ],
         bbox=bbox,
-        size=bbox_to_dimensions(bbox, resolution=10), # 10m resolution
-        config=config
+        size=bbox_to_dimensions(bbox, resolution=10),
+        config=config,
     )
     
     data = request.get_data()
     if data:
-        img = Image.fromarray((data[0] * 255).astype(np.uint8))
-        img.save(output_path)
-        print(f"Saved: {output_path}")
-    else:
-        print(f"Failed to fetch data for {date}")
+        return data[0]
+    return None
 
-def main():
-    parser = argparse.ArgumentParser(description='Fetch Sentinel-1 and Sentinel-2 images.')
-    parser.add_argument('--lat', type=float, required=True, help='Latitude of the center')
-    parser.add_argument('--lon', type=float, required=True, help='Longitude of the center')
-    parser.add_argument('--size', type=float, default=1000, help='Size of the image in meters (square)')
-    parser.add_argument('--date', type=str, required=True, help='Target date (YYYY-MM-DD)')
-    parser.add_argument('--output_dir', type=str, default='data/fetched_images', help='Output directory')
+def save_image(data: np.ndarray, filename: str):
+    """Saves the numpy array as an image file."""
+    if data is None:
+        return
+        
+    if data.shape[-1] == 1:
+        # Single band (index) - save as grayscale or heatmap
+        import matplotlib.pyplot as plt
+        plt.imsave(filename, data.squeeze(), cmap='RdYlGn')
+    else:
+        # RGB
+        import matplotlib.pyplot as plt
+        # Clip to [0, 1] if necessary
+        data = np.clip(data, 0, 1)
+        plt.imsave(filename, data)
+    print(f"Saved image to {filename}")
+
+if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Fetch Sentinel-2 data from Sentinel Hub.")
+    parser.add_argument("--lat", type=float, required=True, help="Latitude of the center point")
+    parser.add_argument("--lon", type=float, required=True, help="Longitude of the center point")
+    parser.add_argument("--length", type=float, default=1000, help="Side length of the BBox in meters (default: 1000)")
+    parser.add_argument("--date", type=str, required=True, help="Target date (YYYY-MM-DD)")
+    parser.add_argument("--index", type=str, default="RGB", choices=["RGB", "NDVI", "NDWI", "MOISTURE"], help="Index to fetch (default: RGB)")
+    parser.add_argument("--output", type=str, help="Output filename (e.g., image.png)")
     
     args = parser.parse_args()
     
-    # Credentials should be set in environment variables:
-    # SH_CLIENT_ID and SH_CLIENT_SECRET
-    config = SHConfig()
-    if not config.sh_client_id or not config.sh_client_secret:
-        print("Error: Sentinel Hub credentials not found.")
-        print("Please set SH_CLIENT_ID and SH_CLIENT_SECRET environment variables.")
-        return
-
-    os.makedirs(args.output_dir, exist_ok=True)
-    target_date = datetime.strptime(args.date, '%Y-%m-%d')
+    if not os.environ.get("SH_CLIENT_ID") or not os.environ.get("SH_CLIENT_SECRET"):
+        print("Error: Please set SH_CLIENT_ID and SH_CLIENT_SECRET environment variables.")
+        exit(1)
+        
+    img = fetch_exact_image(args.lat, args.lon, args.length, args.date, index_type=args.index)
     
-    # Calculate BBox
-    # Roughly 1 degree = 111,000 meters
-    size_deg = args.size / 111000.0
-    bbox = BBox(bbox=[
-        args.lon - size_deg / 2, 
-        args.lat - size_deg / 2, 
-        args.lon + size_deg / 2, 
-        args.lat + size_deg / 2
-    ], crs=CRS.WGS84)
-
-    catalog = SentinelHubCatalog(config=config)
-
-    # Sentinel-2 (L2A) - True Color
-    s2_evalscript = """
-    //VERSION=3
-    function setup() {
-      return {
-        input: ["B04", "B03", "B02"],
-        output: { bands: 3 }
-      };
-    }
-    function evaluatePixel(sample) {
-      return [2.5 * sample.B04, 2.5 * sample.B03, 2.5 * sample.B02];
-    }
-    """
-    
-    print("Searching for Sentinel-2 image...")
-    s2_date = get_closest_date(catalog, DataCollection.SENTINEL2_L2A, bbox, target_date)
-    if s2_date:
-        print(f"Found closest Sentinel-2 date: {s2_date}")
-        output_path = os.path.join(args.output_dir, f"S2_{s2_date[:10]}_{args.lat}_{args.lon}.png")
-        fetch_image(config, DataCollection.SENTINEL2_L2A, bbox, s2_date, s2_evalscript, output_path)
+    if img is not None:
+        output_file = args.output if args.output else f"{args.index}_{args.date}.png"
+        save_image(img, output_file)
     else:
-        print("No Sentinel-2 image found in range.")
+        print("Failed to fetch image.")
 
-    # Sentinel-1 (GRD) - VV
-    s1_evalscript = """
-    //VERSION=3
-    function setup() {
-      return {
-        input: ["VV"],
-        output: { bands: 1 }
-      };
-    }
-    function evaluatePixel(sample) {
-      return [Math.sqrt(sample.VV) * 2];
-    }
-    """
-    
-    print("Searching for Sentinel-1 image...")
-    s1_date = get_closest_date(catalog, DataCollection.SENTINEL1_GRD, bbox, target_date)
-    if s1_date:
-        print(f"Found closest Sentinel-1 date: {s1_date}")
-        output_path = os.path.join(args.output_dir, f"S1_{s1_date[:10]}_{args.lat}_{args.lon}.png")
-        fetch_image(config, DataCollection.SENTINEL1_GRD, bbox, s1_date, s1_evalscript, output_path)
-    else:
-        print("No Sentinel-1 image found in range.")
-
-if __name__ == "__main__":
-    main()
