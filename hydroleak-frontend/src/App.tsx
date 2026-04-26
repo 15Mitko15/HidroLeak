@@ -136,6 +136,7 @@ const App: React.FC = () => {
   const [mapBounds, setMapBounds] = useState<L.LatLngBoundsExpression | null>(null);
   const [showSectors, setShowSectors] = useState(false);
   const [leaks, setLeaks] = useState<Leak[]>([]);
+  const [sofiaPipes, setSofiaPipes] = useState<any>(null);
   const [reportMode, setReportMode] = useState(false);
   const [pendingCoords, setPendingCoords] = useState<[number, number] | null>(null);
   const reportModeRef = useRef(false);
@@ -147,6 +148,15 @@ const App: React.FC = () => {
       .then(setLeaks)
       .catch(err => console.error('Failed to fetch accidents:', err));
   }, []);
+
+  useEffect(() => {
+    if (selectedRegion === 'Sofia City' && !sofiaPipes) {
+      fetch('/sofia-pipes.geojson')
+        .then(res => res.json())
+        .then(setSofiaPipes)
+        .catch(err => console.error('Failed to load Sofia pipes:', err));
+    }
+  }, [selectedRegion, sofiaPipes]);
 
   const filteredLeaks = useMemo(() => {
     if (!selectedRegion) return [];
@@ -324,6 +334,15 @@ const App: React.FC = () => {
 
           {showSectors && (
             <SectorGrid />
+          )}
+
+          {sofiaPipes && selectedRegion === 'Sofia City' && (
+            <GeoJSON
+              key="sofia-pipes"
+              data={sofiaPipes}
+              style={{ color: '#38bdf8', weight: 1.5, opacity: 0.7 }}
+              interactive={false}
+            />
           )}
 
           {selectedRegion && filteredLeaks.map(leak => (
