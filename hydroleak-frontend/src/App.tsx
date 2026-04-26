@@ -174,6 +174,24 @@ const App: React.FC = () => {
     setReportMode(false);
   }, []);
 
+  const handleInference = useCallback(async () => {
+    console.log('--- STARTING SAR INFERENCE ---');
+    try {
+      const response = await fetch('/api/inference');
+      const data = await response.json();
+      console.log('Inference Results:', data);
+      if (data.success) {
+        console.log(`Successfully predicted ${data.predictions.length} leak points from image: ${data.sample_image}`);
+        data.predictions.forEach((p: number[], i: number) => {
+          console.log(`Point ${i + 1}: [${p[0].toFixed(6)}, ${p[1].toFixed(6)}]`);
+        });
+      }
+    } catch (error) {
+      console.error('Inference request failed:', error);
+    }
+    console.log('--- INFERENCE COMPLETE ---');
+  }, []);
+
   const onRegionClick = useCallback((event: any) => {
     if (reportModeRef.current) return;
     const feature = event.target.feature;
@@ -251,6 +269,13 @@ const App: React.FC = () => {
               <span className="font-bold uppercase text-xs tracking-wider">Back to National Map</span>
             </button>
           )}
+          <button
+            onClick={handleInference}
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg border border-blue-500 transition-all shadow-lg font-bold uppercase text-xs tracking-wider"
+          >
+            <Layers size={16} />
+            Run SAR Inference
+          </button>
           <button
             onClick={() => { setReportMode(r => !r); setPendingCoords(null); }}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg border transition-all shadow-lg font-bold uppercase text-xs tracking-wider ${

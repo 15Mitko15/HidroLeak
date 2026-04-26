@@ -8,6 +8,20 @@ import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
+import sys
+import torch
+from PIL import Image
+
+# Add root directory to sys.path to import ml_model
+ROOT_DIR = Path(__file__).parent.parent
+sys.path.append(str(ROOT_DIR))
+
+try:
+    from ml_model.cnn_model import SARLeakCNN
+    from ml_model.preprocess import WaterLeakDataset
+    from torchvision import transforms
+except ImportError as e:
+    print(f"Warning: Could not import ML components: {e}")
 
 
 @asynccontextmanager
@@ -212,6 +226,76 @@ def create_accident(body: dict):
     row = conn.execute("SELECT * FROM accidents WHERE id = ?", (accident["id"],)).fetchone()
     conn.close()
     return row_to_leak(row)
+
+
+MODEL_PATH = ROOT_DIR / "ml_model/saved_models/sar_leak_cnn_regressor.pth"
+
+def run_inference(image_path: Path):
+    """Runs inference on a single SAR image."""
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    # Initialize model
+    model = SARLeakCNN(in_channels=1, num_outputs=10)
+    if MODEL_PATH.exists():
+        model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
+    model.to(device)
+    model.eval()
+
+    # Preprocessing (similar to Dataset class)
+    transform = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.5], std=[0.5])
+    ])
+
+    try:
+        img = Image.open(image_path).convert('L')
+        img_tensor = transform(img).unsqueeze(0).to(device) # Add batch dimension
+        
+        with torch.no_grad():
+            output = model(img_tensor)
+        
+        # Flatten to list of 10 floats
+        coords = output.squeeze().tolist()
+        # Group into 5 pairs of (x, y)
+        points = [[coords[i], coords[i+1]] for i in range(0, 10, 2)]
+        return points
+    except Exception as e:
+        print(f"Inference error: {e}")
+        return None
+
+@app.get("/api/inference")
+def get_inference(sample: bool = True):
+    """
+    Demo endpoint that runs inference on a sample image from the dataset
+    and returns predicted leak coordinates.
+    """
+    # Find a sample image in the dataset for demo purposes
+    dataset_dir = ROOT_DIR / "dataset/leakage_places_images"
+    sample_img = None
+    
+    if dataset_dir.exists():
+        for folder in dataset_dir.iterdir():
+            if folder.is_dir():
+                for file in folder.iterdir():
+                    if file.suffix.lower() in ('.jpg', '.png'):
+                        sample_img = file
+                        break
+                if sample_img: break
+
+    if not sample_img:
+        raise HTTPException(status_code=404, detail="No sample images found for inference")
+
+    points = run_inference(sample_img)
+    if points is None:
+        raise HTTPException(status_code=500, detail="Inference failed")
+
+    return {
+        "success": True,
+        "sample_image": sample_img.name,
+        "predictions": points,
+        "timestamp": datetime.now().isoformat()
+    }
 
 
 @app.patch("/api/accidents/{accident_id}/status")

@@ -5,3 +5,7 @@ matplotlib
 python-dotenv
 fastapi
 uvicorn[standard]
+torch
+torchvision
+Pillow
+scikit-learn
