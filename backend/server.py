@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import sqlite3
 import json
 import random
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -97,6 +98,7 @@ def generate_seed_data():
             "timestamp": timestamp,
             "sector": get_sector(lat, lng),
             "estimated_loss": f"{rng.random() * 10:.1f}L/sec",
+            "status": "pending",
         })
         i += 1
     return leaks
@@ -117,6 +119,7 @@ def row_to_leak(row) -> dict:
         "timestamp": row["timestamp"],
         "sector": row["sector"],
         "estimatedLoss": row["estimated_loss"],
+        "status": row["status"],
     }
 
 
@@ -131,14 +134,15 @@ def init_db():
             severity TEXT NOT NULL,
             timestamp TEXT NOT NULL,
             sector TEXT NOT NULL,
-            estimated_loss TEXT NOT NULL
+            estimated_loss TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending'
         )
     """)
     conn.commit()
     count = conn.execute("SELECT COUNT(*) FROM accidents").fetchone()[0]
     if count == 0:
         conn.executemany(
-            "INSERT INTO accidents VALUES (:id, :region_name, :lat, :lng, :severity, :timestamp, :sector, :estimated_loss)",
+            "INSERT INTO accidents VALUES (:id, :region_name, :lat, :lng, :severity, :timestamp, :sector, :estimated_loss, :status)",
             generate_seed_data(),
         )
         conn.commit()
@@ -169,6 +173,62 @@ def get_accident(accident_id: str):
     conn.close()
     if not row:
         raise HTTPException(status_code=404, detail="Accident not found")
+    return row_to_leak(row)
+
+
+@app.post("/api/accidents")
+def create_accident(body: dict):
+    lat = body.get("lat")
+    lng = body.get("lng")
+    severity = body.get("severity", "Medium")
+    estimated_loss = body.get("estimatedLoss", "0.0L/sec")
+
+    if lat is None or lng is None:
+        raise HTTPException(status_code=400, detail="lat and lng are required")
+    if severity not in ("Low", "Medium", "High"):
+        raise HTTPException(status_code=400, detail="Invalid severity")
+
+    features = _load_regions()
+    region_name = get_region_from_coords(lat, lng, features)
+
+    accident = {
+        "id": f"leak-{uuid.uuid4().hex[:8]}",
+        "region_name": region_name,
+        "lat": lat,
+        "lng": lng,
+        "severity": severity,
+        "timestamp": datetime.now().isoformat(),
+        "sector": get_sector(lat, lng),
+        "estimated_loss": estimated_loss,
+        "status": "pending",
+    }
+
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO accidents VALUES (:id, :region_name, :lat, :lng, :severity, :timestamp, :sector, :estimated_loss, :status)",
+        accident,
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM accidents WHERE id = ?", (accident["id"],)).fetchone()
+    conn.close()
+    return row_to_leak(row)
+
+
+@app.patch("/api/accidents/{accident_id}/status")
+def update_status(accident_id: str, body: dict):
+    status = body.get("status")
+    if status not in ("pending", "in_progress", "resolved", "dismissed", "fixed", "fake"):
+        raise HTTPException(status_code=400, detail="Invalid status")
+    conn = get_conn()
+    result = conn.execute(
+        "UPDATE accidents SET status = ? WHERE id = ?", (status, accident_id)
+    )
+    conn.commit()
+    if result.rowcount == 0:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Accident not found")
+    row = conn.execute("SELECT * FROM accidents WHERE id = ?", (accident_id,)).fetchone()
+    conn.close()
     return row_to_leak(row)
 
 

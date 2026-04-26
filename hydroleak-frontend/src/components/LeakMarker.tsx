@@ -11,7 +11,7 @@ interface LeakMarkerProps {
 const LeakMarker: React.FC<LeakMarkerProps> = ({ leak, onClick }) => {
   const customIcon = L.divIcon({
     className: 'custom-leak-icon',
-    html: `<div class="leak-marker-pulse ${leak.severity.toLowerCase()}" style="width: 20px; height: 20px;"></div>`,
+    html: `<div class="leak-marker-pulse ${leak.severity.toLowerCase()} ${leak.status}" style="width: 20px; height: 20px;"></div>`,
     iconSize: [20, 20],
     iconAnchor: [10, 10],
   });

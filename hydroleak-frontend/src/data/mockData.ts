@@ -1,6 +1,7 @@
 import regionsData from './bulgaria-regions.json';
 
 export type Severity = 'Low' | 'Medium' | 'High';
+export type Status = 'pending' | 'in_progress' | 'resolved' | 'dismissed' | 'fixed' | 'fake';
 
 export interface Leak {
   id: string;
@@ -10,6 +11,7 @@ export interface Leak {
   timestamp: string;
   sector: string;
   estimatedLoss: string;
+  status: Status;
 }
 
 export const REGIONS = [

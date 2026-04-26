@@ -1,13 +1,14 @@
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
-import { MapContainer, TileLayer, GeoJSON, useMap, Tooltip, Polyline } from 'react-leaflet';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import { MapContainer, TileLayer, GeoJSON, useMap, useMapEvents, Tooltip, Polyline } from 'react-leaflet';
 import L from 'leaflet';
-import { ChevronLeft, Info, Droplets, Layers } from 'lucide-react';
+import { ChevronLeft, Info, Droplets, Layers, Plus } from 'lucide-react';
 import 'leaflet/dist/leaflet.css';
 
 import regionsData from './data/bulgaria-regions.json';
-import { type Leak } from './data/mockData';
+import { type Leak, type Status } from './data/mockData';
 import LeakMarker from './components/LeakMarker';
 import LeakDetails from './components/LeakDetails';
+import NewLeakForm from './components/NewLeakForm';
 
 const BULGARIA_CENTER: [number, number] = [42.7339, 25.4858];
 const INITIAL_ZOOM = 7;
@@ -124,12 +125,21 @@ const MapViewHandler = ({ bounds }: { bounds: L.LatLngBoundsExpression | null })
   return null;
 };
 
+const MapClickHandler = ({ onMapClick }: { onMapClick: (lat: number, lng: number) => void }) => {
+  useMapEvents({ click: (e) => onMapClick(e.latlng.lat, e.latlng.lng) });
+  return null;
+};
+
 const App: React.FC = () => {
   const [selectedRegion, setSelectedRegion] = useState<string | null>(null);
   const [selectedLeak, setSelectedLeak] = useState<Leak | null>(null);
   const [mapBounds, setMapBounds] = useState<L.LatLngBoundsExpression | null>(null);
   const [showSectors, setShowSectors] = useState(false);
   const [leaks, setLeaks] = useState<Leak[]>([]);
+  const [reportMode, setReportMode] = useState(false);
+  const [pendingCoords, setPendingCoords] = useState<[number, number] | null>(null);
+  const reportModeRef = useRef(false);
+  useEffect(() => { reportModeRef.current = reportMode; }, [reportMode]);
 
   useEffect(() => {
     fetch('/api/accidents')
@@ -140,10 +150,22 @@ const App: React.FC = () => {
 
   const filteredLeaks = useMemo(() => {
     if (!selectedRegion) return [];
-    return leaks.filter(leak => leak.regionName === selectedRegion);
+    return leaks.filter(leak => leak.regionName === selectedRegion && !['dismissed', 'fixed', 'fake'].includes(leak.status));
   }, [selectedRegion, leaks]);
 
+  const handleStatusChange = useCallback((id: string, status: Status) => {
+    setLeaks(prev => prev.map(l => l.id === id ? { ...l, status } : l));
+    setSelectedLeak(prev => prev?.id === id ? { ...prev, status } : prev);
+  }, []);
+
+  const handleNewLeak = useCallback((leak: Leak) => {
+    setLeaks(prev => [...prev, leak]);
+    setPendingCoords(null);
+    setReportMode(false);
+  }, []);
+
   const onRegionClick = useCallback((event: any) => {
+    if (reportModeRef.current) return;
     const feature = event.target.feature;
     const regionName = feature.properties.shapeName;
     
@@ -209,15 +231,28 @@ const App: React.FC = () => {
           </div>
         </div>
 
-        {selectedRegion && (
-          <button 
-            onClick={resetView}
-            className="flex items-center gap-2 bg-industrial-800 hover:bg-industrial-700 text-white px-4 py-2 rounded-lg border border-industrial-600 transition-all pointer-events-auto shadow-lg"
+        <div className="flex items-center gap-2 pointer-events-auto">
+          {selectedRegion && (
+            <button
+              onClick={resetView}
+              className="flex items-center gap-2 bg-industrial-800 hover:bg-industrial-700 text-white px-4 py-2 rounded-lg border border-industrial-600 transition-all shadow-lg"
+            >
+              <ChevronLeft size={20} />
+              <span className="font-bold uppercase text-xs tracking-wider">Back to National Map</span>
+            </button>
+          )}
+          <button
+            onClick={() => { setReportMode(r => !r); setPendingCoords(null); }}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg border transition-all shadow-lg font-bold uppercase text-xs tracking-wider ${
+              reportMode
+                ? 'bg-red-600 hover:bg-red-500 border-red-500 text-white'
+                : 'bg-industrial-800 hover:bg-industrial-700 border-industrial-600 text-white'
+            }`}
           >
-            <ChevronLeft size={20} />
-            <span className="font-bold uppercase text-xs tracking-wider">Back to National Map</span>
+            <Plus size={16} />
+            {reportMode ? 'Cancel' : 'Report Leak'}
           </button>
-        )}
+        </div>
       </div>
 
       {/* Info Stats Overlay */}
@@ -245,7 +280,7 @@ const App: React.FC = () => {
           <div className="space-y-2">
             <div className="flex justify-between items-center">
               <span className="text-sm text-gray-300">Active Leaks</span>
-              <span className="text-sm font-mono font-bold text-red-500">{leaks.length}</span>
+              <span className="text-sm font-mono font-bold text-red-500">{leaks.filter(l => !['dismissed', 'fixed', 'fake'].includes(l.status)).length}</span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-sm text-gray-300">Selected Region</span>
@@ -262,7 +297,7 @@ const App: React.FC = () => {
       </div>
 
       {/* Map Container */}
-      <div className="flex-1 w-full h-full">
+      <div className={`flex-1 w-full h-full${reportMode ? ' map-report-mode' : ''}`}>
         <MapContainer 
           center={BULGARIA_CENTER} 
           zoom={INITIAL_ZOOM} 
@@ -276,6 +311,10 @@ const App: React.FC = () => {
           />
           
           <MapViewHandler bounds={mapBounds} />
+
+          {reportMode && !pendingCoords && (
+            <MapClickHandler onMapClick={(lat, lng) => setPendingCoords([lat, lng])} />
+          )}
           
           <GeoJSON 
             data={regionsData as any} 
@@ -298,10 +337,19 @@ const App: React.FC = () => {
       </div>
 
       {/* Side Details Panel */}
-      <LeakDetails 
-        leak={selectedLeak} 
-        onClose={() => setSelectedLeak(null)} 
+      <LeakDetails
+        leak={selectedLeak}
+        onClose={() => setSelectedLeak(null)}
+        onStatusChange={handleStatusChange}
       />
+
+      {pendingCoords && (
+        <NewLeakForm
+          coordinates={pendingCoords}
+          onSubmit={handleNewLeak}
+          onCancel={() => setPendingCoords(null)}
+        />
+      )}
     </div>
   );
 };
