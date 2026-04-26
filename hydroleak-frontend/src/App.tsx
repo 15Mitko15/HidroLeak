@@ -5,7 +5,7 @@ import { ChevronLeft, Info, Droplets, Layers } from 'lucide-react';
 import 'leaflet/dist/leaflet.css';
 
 import regionsData from './data/bulgaria-regions.json';
-import { MOCK_LEAKS, type Leak } from './data/mockData';
+import { type Leak } from './data/mockData';
 import LeakMarker from './components/LeakMarker';
 import LeakDetails from './components/LeakDetails';
 
@@ -129,11 +129,19 @@ const App: React.FC = () => {
   const [selectedLeak, setSelectedLeak] = useState<Leak | null>(null);
   const [mapBounds, setMapBounds] = useState<L.LatLngBoundsExpression | null>(null);
   const [showSectors, setShowSectors] = useState(false);
+  const [leaks, setLeaks] = useState<Leak[]>([]);
+
+  useEffect(() => {
+    fetch('/api/accidents')
+      .then(res => res.json())
+      .then(setLeaks)
+      .catch(err => console.error('Failed to fetch accidents:', err));
+  }, []);
 
   const filteredLeaks = useMemo(() => {
     if (!selectedRegion) return [];
-    return MOCK_LEAKS.filter(leak => leak.regionName === selectedRegion);
-  }, [selectedRegion]);
+    return leaks.filter(leak => leak.regionName === selectedRegion);
+  }, [selectedRegion, leaks]);
 
   const onRegionClick = useCallback((event: any) => {
     const feature = event.target.feature;
@@ -237,7 +245,7 @@ const App: React.FC = () => {
           <div className="space-y-2">
             <div className="flex justify-between items-center">
               <span className="text-sm text-gray-300">Active Leaks</span>
-              <span className="text-sm font-mono font-bold text-red-500">{MOCK_LEAKS.length}</span>
+              <span className="text-sm font-mono font-bold text-red-500">{leaks.length}</span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-sm text-gray-300">Selected Region</span>

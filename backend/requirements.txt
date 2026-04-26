@@ -3,3 +3,5 @@ numpy
 pyproj
 matplotlib
 python-dotenv
+fastapi
+uvicorn[standard]
