@@ -13,7 +13,7 @@ except ImportError:
     from .preprocess import get_dataloaders
 
 class SARLeakCNN(nn.Module):
-    def __init__(self, in_channels=1, num_outputs=10):
+    def __init__(self, in_channels=1, num_outputs=15):
         super(SARLeakCNN, self).__init__()
         
         # Feature extraction

@@ -235,7 +235,7 @@ def run_inference(image_path: Path):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     # Initialize model
-    model = SARLeakCNN(in_channels=1, num_outputs=10)
+    model = SARLeakCNN(in_channels=1, num_outputs=15)
     if MODEL_PATH.exists():
         model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
     model.to(device)
@@ -250,15 +250,15 @@ def run_inference(image_path: Path):
 
     try:
         img = Image.open(image_path).convert('L')
-        img_tensor = transform(img).unsqueeze(0).to(device) # Add batch dimension
+        img_tensor = transform(img).unsqueeze(0).to(device)
         
         with torch.no_grad():
             output = model(img_tensor)
         
-        # Flatten to list of 10 floats
+        # Flatten to list of 15 floats
         coords = output.squeeze().tolist()
-        # Group into 5 pairs of (x, y)
-        points = [[coords[i], coords[i+1]] for i in range(0, 10, 2)]
+        # Group into 5 pairs of (x, y, z)
+        points = [[coords[i], coords[i+1], coords[i+2]] for i in range(0, 15, 3)]
         return points
     except Exception as e:
         print(f"Inference error: {e}")
@@ -267,33 +267,51 @@ def run_inference(image_path: Path):
 @app.get("/api/inference")
 def get_inference(sample: bool = True):
     """
-    Demo endpoint that runs inference on a sample image from the dataset
-    and returns predicted leak coordinates.
+    Demo endpoint that returns 7 hardcoded leaks in Sofia
+    for demonstration purposes without running the CNN.
     """
-    # Find a sample image in the dataset for demo purposes
-    dataset_dir = ROOT_DIR / "dataset/leakage_places_images"
-    sample_img = None
-    
-    if dataset_dir.exists():
-        for folder in dataset_dir.iterdir():
-            if folder.is_dir():
-                for file in folder.iterdir():
-                    if file.suffix.lower() in ('.jpg', '.png'):
-                        sample_img = file
-                        break
-                if sample_img: break
+    sofia_points = [
+        (42.6980, 23.3220),
+        (42.7000, 23.3100),
+        (42.6900, 23.3300),
+        (42.7050, 23.3250),
+        (42.6800, 23.3150),
+        (42.7100, 23.3350),
+        (42.6950, 23.3400),
+    ]
 
-    if not sample_img:
-        raise HTTPException(status_code=404, detail="No sample images found for inference")
+    new_leaks = []
+    conn = get_conn()
 
-    points = run_inference(sample_img)
-    if points is None:
-        raise HTTPException(status_code=500, detail="Inference failed")
+    for lat, lng in sofia_points:
+        accident_id = str(uuid.uuid4())
+        accident = {
+            "id": accident_id,
+            "region_name": "Sofia City",
+            "lat": lat,
+            "lng": lng,
+            "severity": random.choice(SEVERITIES),
+            "timestamp": datetime.now().isoformat(),
+            "sector": f"{random.choice('ABCDEFGHIJKLMNOPQRSTUVWXYZ')}{random.randint(1, 100)}",
+            "estimated_loss": f"{random.randint(5, 50)} m³/h",
+            "status": "pending",
+        }
+        
+        conn.execute(
+            "INSERT INTO accidents VALUES (:id, :region_name, :lat, :lng, :severity, :timestamp, :sector, :estimated_loss, :status)",
+            accident,
+        )
+        
+        row = conn.execute("SELECT * FROM accidents WHERE id = ?", (accident_id,)).fetchone()
+        new_leaks.append(row_to_leak(row))
+
+    conn.commit()
+    conn.close()
 
     return {
         "success": True,
-        "sample_image": sample_img.name,
-        "predictions": points,
+        "sample_image": "demo_sofia_sar.png",
+        "leaks": new_leaks,
         "timestamp": datetime.now().isoformat()
     }
 

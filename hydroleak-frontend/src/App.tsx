@@ -177,14 +177,12 @@ const App: React.FC = () => {
   const handleInference = useCallback(async () => {
     console.log('--- STARTING SAR INFERENCE ---');
     try {
-      const response = await fetch('/api/inference');
+      const response = await fetch('http://localhost:8000/api/inference');
       const data = await response.json();
       console.log('Inference Results:', data);
-      if (data.success) {
-        console.log(`Successfully predicted ${data.predictions.length} leak points from image: ${data.sample_image}`);
-        data.predictions.forEach((p: number[], i: number) => {
-          console.log(`Point ${i + 1}: [${p[0].toFixed(6)}, ${p[1].toFixed(6)}]`);
-        });
+      if (data.success && data.leaks) {
+        console.log(`Successfully added ${data.leaks.length} leak points from image: ${data.sample_image}`);
+        setLeaks(prev => [...prev, ...data.leaks]);
       }
     } catch (error) {
       console.error('Inference request failed:', error);
